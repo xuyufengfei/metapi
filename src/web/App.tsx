@@ -585,7 +585,11 @@ function AppShell() {
         setRequirePasswordChange(Boolean(info?.requirePasswordChange));
       } catch (error: any) {
         if (cancelled) return;
-        if (error?.message !== 'Session expired') {
+        if (error?.message === 'Session expired') {
+          clearAuthSession(localStorage);
+          setRequirePasswordChange(false);
+          setAuthed(false);
+        } else {
           toast.info(t('读取登录状态失败，请稍后重试'));
         }
       } finally {

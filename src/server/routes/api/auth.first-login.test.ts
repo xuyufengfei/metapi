@@ -1,19 +1,22 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
 
 describe('auth first login enforcement api', () => {
   let app: FastifyInstance;
+  let dataDir: string;
+  const originalDataDir = process.env.DATA_DIR;
   let db: typeof import('../../db/index.js')['db'];
   let schema: typeof import('../../db/index.js')['schema'];
   let config: typeof import('../../config.js')['config'];
   let FACTORY_RESET_ADMIN_TOKEN: typeof import('../../services/factoryResetService.js')['FACTORY_RESET_ADMIN_TOKEN'];
 
   beforeAll(async () => {
-    process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'metapi-auth-first-login-'));
+    dataDir = mkdtempSync(join(tmpdir(), 'metapi-auth-first-login-'));
+    process.env.DATA_DIR = dataDir;
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const configModule = await import('../../config.js');
@@ -35,7 +38,12 @@ describe('auth first login enforcement api', () => {
 
   afterAll(async () => {
     await app.close();
-    delete process.env.DATA_DIR;
+    rmSync(dataDir, { recursive: true, force: true });
+    if (originalDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = originalDataDir;
+    }
   });
 
   it('reports requirePasswordChange when default token is still active', async () => {

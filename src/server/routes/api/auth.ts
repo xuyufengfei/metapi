@@ -8,8 +8,12 @@ import { FACTORY_RESET_ADMIN_TOKEN } from '../../services/factoryResetService.js
 
 const MIN_ADMIN_TOKEN_LENGTH = 12;
 
+function normalizeToken(token: string | undefined | null): string {
+  return (token || '').trim();
+}
+
 function isDefaultAdminTokenInUse(): boolean {
-  return (config.authToken || '').trim() === FACTORY_RESET_ADMIN_TOKEN;
+  return normalizeToken(config.authToken) === normalizeToken(FACTORY_RESET_ADMIN_TOKEN);
 }
 
 const limitAdminTokenChange = createRateLimitGuard({
@@ -25,8 +29,10 @@ export async function authRoutes(app: FastifyInstance) {
     { preHandler: [limitAdminTokenChange] },
     async (request, reply) => {
     const { oldToken, newToken } = request.body;
-    const cleanOldToken = (oldToken || '').trim();
-    const cleanNewToken = (newToken || '').trim();
+    const cleanOldToken = normalizeToken(oldToken);
+    const cleanNewToken = normalizeToken(newToken);
+    const currentAuthToken = normalizeToken(config.authToken);
+    const defaultAdminToken = normalizeToken(FACTORY_RESET_ADMIN_TOKEN);
 
     if (!cleanOldToken || !cleanNewToken) {
       return reply.code(400).send({ success: false, message: '请填写所有字段' });
@@ -36,11 +42,11 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: `新 Token 至少 ${MIN_ADMIN_TOKEN_LENGTH} 个字符` });
     }
 
-    if (cleanNewToken === FACTORY_RESET_ADMIN_TOKEN) {
+    if (cleanNewToken === defaultAdminToken) {
       return reply.code(400).send({ success: false, message: '不能继续使用默认管理员 Token' });
     }
 
-    if (cleanOldToken !== config.authToken) {
+    if (cleanOldToken !== currentAuthToken) {
       return reply.code(403).send({ success: false, message: '旧 Token 验证失败' });
     }
 

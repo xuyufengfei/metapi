@@ -53,9 +53,21 @@ async function flush() {
 
 describe('App first login password change flow', () => {
   let storage: ReturnType<typeof createStorage>;
+  const originalDescriptors = new Map<PropertyKey, PropertyDescriptor | undefined>();
+
+  const rememberDescriptor = (key: keyof typeof globalThis) => {
+    originalDescriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
+    originalDescriptors.clear();
     storage = createStorage({ auth_token: 'change-me-admin-token', auth_token_expires_at: String(Date.now() + 60_000) });
+
+    for (const key of ['localStorage', 'Node', 'Element', 'HTMLElement', 'Text', 'MutationObserver', 'window', 'document'] as const) {
+      rememberDescriptor(key);
+    }
+
     Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true, writable: true });
     class NodeStub {}
     Object.assign(NodeStub, { TEXT_NODE: 3, ELEMENT_NODE: 1 });
@@ -103,7 +115,16 @@ describe('App first login password change flow', () => {
     apiMock.getEvents.mockResolvedValue([]);
   });
 
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    for (const [key, descriptor] of originalDescriptors.entries()) {
+      if (descriptor) {
+        Object.defineProperty(globalThis, key, descriptor);
+      } else {
+        delete (globalThis as Record<PropertyKey, unknown>)[key];
+      }
+    }
+    vi.clearAllMocks();
+  });
 
   it('forces the user into change-token flow when requirePasswordChange is true', async () => {
     apiMock.getAuthInfo.mockResolvedValue({ requirePasswordChange: true });
@@ -115,6 +136,23 @@ describe('App first login password change flow', () => {
       await flush();
       expect(JSON.stringify(root!.toJSON())).toContain('首次登录请修改管理员 Token');
       expect(JSON.stringify(root!.toJSON())).toContain('默认管理员 Token');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('clears auth state when auth info loading reports session expired', async () => {
+    apiMock.getAuthInfo.mockRejectedValue(new Error('Session expired'));
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(<MemoryRouter><App /></MemoryRouter>);
+      });
+      await flush();
+      expect(storage.getItem('auth_token')).toBeNull();
+      expect(storage.getItem('auth_token_expires_at')).toBeNull();
+      expect(JSON.stringify(root!.toJSON())).toContain('Admin Token');
+      expect(JSON.stringify(root!.toJSON())).toContain('Sign In');
     } finally {
       root?.unmount();
     }
