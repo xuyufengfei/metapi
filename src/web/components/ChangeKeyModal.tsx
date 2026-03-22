@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.js';
 import { useToast } from './Toast.js';
-import { persistAuthSession } from '../authSession.js';
 import { useAnimatedVisibility } from './useAnimatedVisibility.js';
 
 export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -33,8 +32,8 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
       setError('两次输入的新 Token 不一致');
       return;
     }
-    if (newToken.length < 6) {
-      setError('新 Token 至少 6 个字符');
+    if (newToken.length < 12) {
+      setError('新 Token 至少 12 个字符');
       return;
     }
 
@@ -43,7 +42,6 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
       const res = await api.changeAuthToken(oldToken, newToken);
       if (res.success) {
         toast.success('Token 已更新，请使用新 Token 重新登录');
-        persistAuthSession(localStorage, newToken);
         onClose();
         setOldToken('');
         setNewToken('');
@@ -88,7 +86,7 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
               type="password"
               value={newToken}
               onChange={e => { setNewToken(e.target.value); setError(''); }}
-              placeholder="输入新 Token (至少 6 位)"
+              placeholder="输入新 Token (至少 12 位)"
               style={inputStyle}
             />
           </div>

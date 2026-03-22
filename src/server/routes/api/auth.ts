@@ -4,6 +4,13 @@ import { config } from '../../config.js';
 import { eq } from 'drizzle-orm';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
+import { FACTORY_RESET_ADMIN_TOKEN } from '../../services/factoryResetService.js';
+
+const MIN_ADMIN_TOKEN_LENGTH = 12;
+
+function isDefaultAdminTokenInUse(): boolean {
+  return (config.authToken || '').trim() === FACTORY_RESET_ADMIN_TOKEN;
+}
 
 const limitAdminTokenChange = createRateLimitGuard({
   bucket: 'auth-change',
@@ -18,29 +25,35 @@ export async function authRoutes(app: FastifyInstance) {
     { preHandler: [limitAdminTokenChange] },
     async (request, reply) => {
     const { oldToken, newToken } = request.body;
+    const cleanOldToken = (oldToken || '').trim();
+    const cleanNewToken = (newToken || '').trim();
 
-    if (!oldToken || !newToken) {
+    if (!cleanOldToken || !cleanNewToken) {
       return reply.code(400).send({ success: false, message: '请填写所有字段' });
     }
 
-    if (newToken.length < 6) {
-      return reply.code(400).send({ success: false, message: '新 Token 至少 6 个字符' });
+    if (cleanNewToken.length < MIN_ADMIN_TOKEN_LENGTH) {
+      return reply.code(400).send({ success: false, message: `新 Token 至少 ${MIN_ADMIN_TOKEN_LENGTH} 个字符` });
     }
 
-    if (oldToken !== config.authToken) {
+    if (cleanNewToken === FACTORY_RESET_ADMIN_TOKEN) {
+      return reply.code(400).send({ success: false, message: '不能继续使用默认管理员 Token' });
+    }
+
+    if (cleanOldToken !== config.authToken) {
       return reply.code(403).send({ success: false, message: '旧 Token 验证失败' });
     }
 
     // Save to settings table
     const existing = await db.select().from(schema.settings).where(eq(schema.settings.key, 'auth_token')).get();
     if (existing) {
-      await db.update(schema.settings).set({ value: JSON.stringify(newToken) }).where(eq(schema.settings.key, 'auth_token')).run();
+      await db.update(schema.settings).set({ value: JSON.stringify(cleanNewToken) }).where(eq(schema.settings.key, 'auth_token')).run();
     } else {
-      await db.insert(schema.settings).values({ key: 'auth_token', value: JSON.stringify(newToken) }).run();
+      await db.insert(schema.settings).values({ key: 'auth_token', value: JSON.stringify(cleanNewToken) }).run();
     }
 
     // Update runtime config
-    config.authToken = newToken;
+    config.authToken = cleanNewToken;
 
     try {
       const createdAt = formatUtcSqlDateTime(new Date());
@@ -54,7 +67,7 @@ export async function authRoutes(app: FastifyInstance) {
       }).run();
     } catch {}
 
-    return { success: true, message: 'Token 已更新' };
+    return { success: true, message: 'Token 已更新', requirePasswordChange: isDefaultAdminTokenInUse() };
     },
   );
 
@@ -64,6 +77,6 @@ export async function authRoutes(app: FastifyInstance) {
     const masked = token.length > 8
       ? token.slice(0, 4) + '****' + token.slice(-4)
       : '****';
-    return { masked };
+    return { masked, requirePasswordChange: isDefaultAdminTokenInUse() };
   });
 }

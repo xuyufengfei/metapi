@@ -14,11 +14,10 @@ import {
 } from './appLocalState.js';
 import { I18nProvider, useI18n } from './i18n.js';
 import { resolveLoginErrorMessage } from './loginError.js';
-import { SITE_DOCS_URL, SITE_GITHUB_URL } from './docsLink.js';
+import { SITE_DOCS_URL } from './docsLink.js';
 import { useAnimatedVisibility } from './components/useAnimatedVisibility.js';
 import { useIsMobile } from './components/useIsMobile.js';
 import { MobileDrawer } from './components/MobileDrawer.js';
-import CenteredModal from './components/CenteredModal.js';
 const Dashboard = lazy(() => import('./pages/Dashboard.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
@@ -36,7 +35,6 @@ const About = lazy(() => import('./pages/About.js'));
 const ModelTester = lazy(() => import('./pages/ModelTester.js'));
 const Monitors = lazy(() => import('./pages/Monitors.js'));
 const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));
-const SiteAnnouncements = lazy(() => import('./pages/SiteAnnouncements.js'));
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -128,24 +126,84 @@ function resolveStoredProfile(): UserProfile {
   }
 }
 
-export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (text: string) => string }) {
+
+const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
+
+type AuthInfo = {
+  masked?: string;
+  requirePasswordChange?: boolean;
+};
+
+function ForceChangeTokenPage({
+  onCompleted,
+}: {
+  onCompleted: () => void;
+}) {
+  const toast = useToast();
+  const [currentToken, setCurrentToken] = useState('');
+  const [newToken, setNewToken] = useState('');
+  const [confirmToken, setConfirmToken] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async () => {
+    setError('');
+    const cleanCurrentToken = currentToken.trim();
+    const cleanNewToken = newToken.trim();
+    const cleanConfirmToken = confirmToken.trim();
+    if (!cleanCurrentToken || !cleanNewToken || !cleanConfirmToken) {
+      setError('请填写所有字段');
+      return;
+    }
+    if (cleanNewToken !== cleanConfirmToken) {
+      setError('两次输入的新 Token 不一致');
+      return;
+    }
+    if (cleanNewToken.length < 12) {
+      setError('新 Token 至少 12 个字符');
+      return;
+    }
+    if (cleanNewToken === FACTORY_RESET_ADMIN_TOKEN) {
+      setError('不能继续使用默认管理员 Token');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await api.changeAuthToken(cleanCurrentToken, cleanNewToken);
+      clearAuthSession(localStorage);
+      toast.success('管理员 Token 已更新，请使用新 Token 重新登录');
+      onCompleted();
+    } catch (e: any) {
+      setError(e?.message || '更新失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-bg)', padding: 24 }}>
+      <div className="animate-scale-in" style={{ background: 'var(--color-bg-card)', padding: 32, borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lg)', width: '100%', maxWidth: 460, border: '1px solid var(--color-border-light)' }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>首次登录请修改管理员 Token</h1>
+        <p style={{ fontSize: 14, color: 'var(--color-text-muted)', marginBottom: 24 }}>当前仍在使用默认管理员 Token，继续使用存在安全风险。完成修改前，暂不可进入正常后台。</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <input type="password" placeholder="当前管理员 Token" value={currentToken} onChange={(e) => { setCurrentToken(e.target.value); setError(''); }} style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', fontSize: 14, outline: 'none', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }} />
+          <input type="password" placeholder="新管理员 Token（至少 12 位）" value={newToken} onChange={(e) => { setNewToken(e.target.value); setError(''); }} style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', fontSize: 14, outline: 'none', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }} />
+          <input type="password" placeholder="确认新管理员 Token" value={confirmToken} onChange={(e) => { setConfirmToken(e.target.value); setError(''); }} onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', fontSize: 14, outline: 'none', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }} />
+        </div>
+        {error && <div className="alert alert-error animate-shake" style={{ marginTop: 12 }}>{error}</div>}
+        <button onClick={handleSubmit} disabled={saving} className="btn btn-primary" style={{ width: '100%', padding: '10px 0', fontSize: 14, fontWeight: 600, marginTop: 16 }}>
+          {saving ? '更新中...' : '确认修改并重新登录'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (text: string) => string }) {
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const capabilityRows = [
-    {
-      title: t('统一代理网关'),
-      description: t('一个 Key、一个入口，兼容 OpenAI / Claude 下游格式'),
-    },
-    {
-      title: t('自动模型发现'),
-      description: t('上游新增模型自动出现在模型列表，零配置路由生成'),
-    },
-    {
-      title: t('智能路由引擎'),
-      description: t('按成本、延迟、成功率自动选择最优通道，故障自动转移'),
-    },
-  ];
 
   const handleLogin = async () => {
     if (!token) return;
@@ -182,100 +240,37 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
   };
 
   return (
-    <div className="login-shell">
-      <div className="login-surface animate-scale-in">
-        <section className="login-brand-panel login-brand-panel-light">
-          <div className="login-brand-header">
-            <div className="brand-mark-frame brand-mark-frame-hero">
-              <div className="brand-mark-canvas">
-                <img src="/logo.png" alt="Metapi" className="login-brand-logo" />
-              </div>
-            </div>
-            <div className="login-brand-summary">
-              <div className="login-brand-name">Metapi</div>
-              <div className="login-brand-kicker">{t('中转站的中转站')}</div>
-            </div>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-bg)' }}>
+      <div className="animate-scale-in" style={{ background: 'var(--color-bg-card)', padding: 40, borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lg)', width: 400, border: '1px solid var(--color-border-light)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <img src="/logo.png" alt="Metapi" style={{ width: 40, height: 40, borderRadius: 12 }} />
+          <h1 style={{ fontSize: 24, fontWeight: 700 }}>Metapi</h1>
+        </div>
+        <p style={{ fontSize: 14, color: 'var(--color-text-muted)', marginBottom: 24 }}>{t('请输入管理员令牌后继续。')}</p>
+        <input
+          type="password"
+          placeholder={t('管理员令牌')}
+          value={token}
+          onChange={(e) => {
+            setToken(e.target.value);
+            setError('');
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+          style={{ width: '100%', padding: '10px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', fontSize: 14, outline: 'none', background: 'var(--color-bg)', color: 'var(--color-text-primary)', marginBottom: 12, transition: 'border-color 0.2s' }}
+        />
+        {error && (
+          <div className="alert alert-error animate-shake" style={{ marginBottom: 12 }}>
+            {error}
           </div>
-          <div className="login-brand-copy-block">
-            <p className="login-brand-copy">
-              {t('把分散的 New API / One API / OneHub 等站点聚合成统一网关，自动发现模型、智能路由、成本更优。')}
-            </p>
-          </div>
-          <div className="login-compat-line">{t('兼容 New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API')}</div>
-          <div className="login-capability-list">
-            {capabilityRows.map((feature, index) => (
-              <div key={feature.title} className="login-capability-row">
-                <div className="login-capability-index">{String(index + 1).padStart(2, '0')}</div>
-                <div className="login-capability-content">
-                  <div className="login-capability-title">{feature.title}</div>
-                  <p className="login-capability-desc">{feature.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="login-brand-footer">
-            <a
-              href={SITE_GITHUB_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="login-icon-link"
-              aria-label="GitHub"
-              title="GitHub"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="login-icon-link-svg">
-                <path
-                  fill="currentColor"
-                  d="M12 2C6.48 2 2 6.59 2 12.25c0 4.53 2.87 8.38 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.22-3.37-1.22-.45-1.2-1.11-1.52-1.11-1.52-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.35 1.12 2.92.85.09-.67.35-1.12.64-1.38-2.22-.26-4.55-1.15-4.55-5.13 0-1.13.39-2.05 1.03-2.77-.1-.26-.45-1.31.1-2.73 0 0 .84-.28 2.75 1.06A9.3 9.3 0 0 1 12 6.91c.85 0 1.71.12 2.51.35 1.91-1.34 2.75-1.06 2.75-1.06.55 1.42.2 2.47.1 2.73.64.72 1.03 1.64 1.03 2.77 0 3.99-2.34 4.86-4.57 5.12.36.33.68.97.68 1.96 0 1.42-.01 2.56-.01 2.91 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.25C22 6.59 17.52 2 12 2Z"
-                />
-              </svg>
-            </a>
-            <a
-              href={SITE_DOCS_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="login-doc-link"
-            >
-              {t('部署文档')}
-            </a>
-          </div>
-        </section>
-
-        <section className="login-auth-stage">
-          <div className="login-auth-panel">
-            <div className="login-auth-eyebrow">{t('管理员入口')}</div>
-            <h2 className="login-auth-title">{t('登录')}</h2>
-            <p className="login-auth-copy">{t('请输入管理员令牌后继续。')}</p>
-            <label className="login-auth-label" htmlFor="admin-token-input">{t('管理员令牌')}</label>
-            <input
-              id="admin-token-input"
-              type="password"
-              placeholder={t('管理员令牌')}
-              value={token}
-              onChange={(e) => {
-                setToken(e.target.value);
-                setError('');
-              }}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              className="login-auth-input"
-            />
-            {error && (
-              <div className="alert alert-error animate-shake" style={{ marginBottom: 12 }}>
-                {error}
-              </div>
-            )}
-            <button
-              onClick={handleLogin}
-              disabled={loading || !token}
-              className="btn btn-primary login-auth-submit"
-            >
-              {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />{t('验证中...')}</> : t('登录')}
-            </button>
-            <div className="login-auth-note">{t('仅校验本地服务访问权限，不会把令牌发送到第三方。')}</div>
-            <div className="login-auth-footer">
-              <span>{t('管理员登录后继续。')}</span>
-            </div>
-          </div>
-        </section>
+        )}
+        <button
+          onClick={handleLogin}
+          disabled={loading || !token}
+          className="btn btn-primary"
+          style={{ width: '100%', padding: '10px 0', fontSize: 14, fontWeight: 600 }}
+        >
+          {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />{t('验证中...')}</> : t('登录')}
+        </button>
       </div>
     </div>
   );
@@ -294,6 +289,7 @@ function UserProfileModal({
   onSave: (nextProfile: UserProfile) => void;
   t: (text: string) => string;
 }) {
+  const presence = useAnimatedVisibility(open, 200);
   const [name, setName] = useState(profile.name);
   const [avatarSeed, setAvatarSeed] = useState(profile.avatarSeed);
   const [avatarStyle, setAvatarStyle] = useState(profile.avatarStyle);
@@ -306,6 +302,8 @@ function UserProfileModal({
     setAvatarStyle(profile.avatarStyle);
     setError('');
   }, [open, profile]);
+
+  if (!presence.shouldRender) return null;
 
   const avatarUrl = buildDicebearAvatarUrl(avatarStyle, avatarSeed);
 
@@ -346,70 +344,64 @@ function UserProfileModal({
   };
 
   return (
-    <CenteredModal
-      open={open}
-      onClose={onClose}
-      title={t('个人信息')}
-      maxWidth={440}
-      closeOnBackdrop
-      closeOnEscape
-      bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-      footer={(
-        <>
+    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
+      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+        <div className="modal-header">{t('个人信息')}</div>
+        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2 }}>
+            <div className="topbar-avatar" style={{ width: 40, height: 40, fontSize: 14 }}>
+              <img
+                src={avatarUrl}
+                alt={name.trim() || 'avatar'}
+                style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{t('右上角头像实时预览')}</div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>{t('用户名')}</div>
+            <input
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setError('');
+              }}
+              placeholder={t('例如：小王')}
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+              {t('头像（Dicebear 随机） · 风格：')}{avatarStyle}
+            </div>
+            <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={handleRandomAvatar}>
+              {t('换一个随机头像')}
+            </button>
+          </div>
+
+          {error && (
+            <div className="alert alert-error">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
           <button onClick={onClose} className="btn btn-ghost">{t('取消')}</button>
           <button onClick={handleSubmit} className="btn btn-primary">{t('保存')}</button>
-        </>
-      )}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2 }}>
-        <div className="topbar-avatar" style={{ width: 40, height: 40, fontSize: 14 }}>
-          <img
-            src={avatarUrl}
-            alt={name.trim() || 'avatar'}
-            style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-          />
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{t('右上角头像实时预览')}</div>
       </div>
-
-      <div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>{t('用户名')}</div>
-        <input
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            setError('');
-          }}
-          placeholder={t('例如：小王')}
-          style={inputStyle}
-        />
-      </div>
-
-      <div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-          {t('头像（Dicebear 随机） · 风格：')}{avatarStyle}
-        </div>
-        <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={handleRandomAvatar}>
-          {t('换一个随机头像')}
-        </button>
-      </div>
-
-      {error && (
-        <div className="alert alert-error">
-          {error}
-        </div>
-      )}
-    </CenteredModal>
+    </div>
   );
 }
 
-export const sidebarGroups = [
+const sidebarGroups = [
   {
     label: '控制台',
     items: [
       { to: '/', label: '仪表盘', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 12a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1v-7z" /></svg> },
-      { to: '/sites', label: '站点管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
-      { to: '/site-announcements', label: '站点公告', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
+      { to: '/sites', label: '站点', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
       { to: '/accounts', label: '连接管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
       { to: '/oauth', label: 'OAuth 管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a3 3 0 106 0 3 3 0 00-6 0zM3 17a3 3 0 106 0 3 3 0 00-6 0zM15 17a3 3 0 106 0 3 3 0 00-6 0zM6 14V10m0 0a3 3 0 113-3m-3 3a3 3 0 003 3h6" /></svg> },
       { to: '/downstream-keys', label: '下游密钥', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
@@ -454,6 +446,8 @@ function RouteLoadingFallback() {
 function AppShell() {
   const { language, toggleLanguage, t } = useI18n();
   const [authed, setAuthed] = useState(() => hasValidAuthSession(localStorage));
+  const [requirePasswordChange, setRequirePasswordChange] = useState(false);
+  const [authInfoLoaded, setAuthInfoLoaded] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -472,7 +466,7 @@ function AppShell() {
   const notifBtnRef = useRef<HTMLButtonElement>(null);
   const latestTaskEventIdRef = useRef(0);
   const toast = useToast();
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile(768);
   const resolvedTheme: 'light' | 'dark' = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
     : themeMode;
@@ -508,12 +502,6 @@ function AppShell() {
   useEffect(() => {
     document.documentElement.setAttribute('data-layout', isMobile ? 'mobile' : 'desktop');
   }, [isMobile]);
-
-  useEffect(() => {
-    if (!isMobile && drawerOpen) {
-      setDrawerOpen(false);
-    }
-  }, [drawerOpen, isMobile]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -582,6 +570,36 @@ function AppShell() {
   }, [authed, toast]);
 
   useEffect(() => {
+    if (!authed) {
+      setRequirePasswordChange(false);
+      setAuthInfoLoaded(true);
+      return;
+    }
+    let cancelled = false;
+    setAuthInfoLoaded(false);
+
+    const loadAuthInfo = async () => {
+      try {
+        const info = await api.getAuthInfo() as AuthInfo;
+        if (cancelled) return;
+        setRequirePasswordChange(Boolean(info?.requirePasswordChange));
+      } catch (error: any) {
+        if (cancelled) return;
+        if (error?.message !== 'Session expired') {
+          toast.info(t('读取登录状态失败，请稍后重试'));
+        }
+      } finally {
+        if (!cancelled) setAuthInfoLoaded(true);
+      }
+    };
+
+    void loadAuthInfo();
+    return () => {
+      cancelled = true;
+    };
+  }, [authed, t, toast]);
+
+  useEffect(() => {
     if (!authed) return;
 
     const check = () => {
@@ -639,6 +657,19 @@ function AppShell() {
     return <Login t={t} onLogin={(token) => {
       persistAuthSession(localStorage, token);
       setAuthed(true);
+      setAuthInfoLoaded(false);
+    }} />;
+  }
+
+  if (!authInfoLoaded) {
+    return <RouteLoadingFallback />;
+  }
+
+  if (requirePasswordChange) {
+    return <ForceChangeTokenPage onCompleted={() => {
+      setRequirePasswordChange(false);
+      setAuthed(false);
+      setAuthInfoLoaded(true);
     }} />;
   }
 
@@ -648,9 +679,8 @@ function AppShell() {
         {isMobile && (
           <button
             className="topbar-icon-btn"
-            aria-label={t('打开导航')}
+            aria-label="Open navigation"
             onClick={() => setDrawerOpen(true)}
-            type="button"
           >
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -739,12 +769,9 @@ function AppShell() {
             )}
           </div>
           <div ref={userMenuRef} style={{ position: 'relative' }}>
-            <button
-              type="button"
+            <div
               className="topbar-avatar"
               aria-label={displayName}
-              aria-haspopup="menu"
-              aria-expanded={showUserMenu}
               onClick={() => {
                 setShowUserMenu(!showUserMenu);
                 setShowThemeMenu(false);
@@ -755,7 +782,7 @@ function AppShell() {
                 alt={displayName}
                 style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
               />
-            </button>
+            </div>
             {userMenuPresence.shouldRender && (
               <div className={`user-dropdown ${userMenuPresence.isVisible ? '' : 'is-closing'}`.trim()}>
                 <button
@@ -783,12 +810,7 @@ function AppShell() {
 
       <div className="app-layout">
         {isMobile ? (
-          <MobileDrawer
-            open={drawerOpen}
-            onClose={() => setDrawerOpen(false)}
-            title={t('导航菜单')}
-            closeLabel={t('关闭导航')}
-          >
+          <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
             <div className="mobile-drawer-header">
               <img src="/logo.png" alt="Metapi" />
               <span>Metapi</span>
@@ -813,7 +835,7 @@ function AppShell() {
               ))}
               <div className="mobile-nav-group">
                 <div className="mobile-nav-label">{t('更多')}</div>
-                {topNavItems.filter((n) => n.to !== '/').map((item) => (
+                {topNavItems.filter(n => n.to !== '/').map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
@@ -861,7 +883,6 @@ function AppShell() {
               <Routes>
                 <Route path="/" element={<Dashboard adminName={displayName} />} />
                 <Route path="/sites" element={<Sites />} />
-                <Route path="/site-announcements" element={<SiteAnnouncements />} />
                 <Route path="/accounts" element={<Accounts />} />
                 <Route path="/oauth" element={<OAuthManagement />} />
                 <Route path="/tokens" element={<Tokens />} />
